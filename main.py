@@ -75,10 +75,12 @@ def send_query(ip_address="8.8.8.8", domain_name="dns.google.com", record_type=1
     # build the query for the domain name assuming it is an A record
     # if it is a different record type, the program will fail.
     query = build_query(domain_name, record_type)
+    
     # create a UDP socket
     # `socket.AF_INET` means that we're connecting to the internet
     # socket.SOCK_DGRAM means that we're using UDP
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
     # send our query to 8.8.8.8, port 53. Port 53 is the DNS port
     # 8.8.8.8 is a public DNS server run by Google, so it is cheating to use this
     # The final goal is to implement a DNS resolver that can run by itself, without using any external DNS servers.
@@ -109,6 +111,9 @@ def parse_record(reader):
         data = decode_name(reader)
     elif type_ == TYPE_A:
         data = ip_to_string(reader.read(data_length))
+    else:
+        data = reader.read(data_length)
+    return Record(name, type_, class_, ttl, data)
 
     data = reader.read(data_length)
     return Record(name, type_, class_, ttl, data)
@@ -171,23 +176,52 @@ def decode_compressed_name(length, reader):
 def ip_to_string(ip):
     return ".".join([str(byte) for byte in ip])
 
+def get_answer(packet):
+    # return the first TYPE_A record in the answers
+    for answer in packet.answers:
+        if answer.type_ == TYPE_A:
+            return answer.data
 
+def get_nameserver_ip(packet):
+    # return the first TYPE_A record in the Additional section
+    for record in packet.additional:
+        if record.type_ == TYPE_A:
+            return record.data
+
+def get_nameserver(packet):
+    # return the first TYPE_NS record in the Authorities section
+    for record in packet.authorities:
+        if record.type_ == TYPE_NS:
+            return record.data.decode("utf-8")
+
+def resolve(domain_name, record_type):
+    '''
+    This function resolves a domain name to an IP address.
+    It starts by querying the root nameserver, and then it keeps querying the nameservers it gets until it gets an answer.
+    '''
+    nameserver = "198.41.0.4"
+    while True:
+        print(f"Querying {nameserver} for {domain_name}")
+        response = send_query(nameserver, domain_name, record_type)
+        # if we got an answer, we return it
+        if ip:= get_answer(response):
+            return ip
+        # if we didn't get an answer, we check if we got a nameserver to keep looking 
+        elif nsIP := get_nameserver_ip(response):
+            # in the next iteration, we'll query the nameserver we got
+            nameserver = nsIP
+        elif ns_domain_name := get_nameserver(response):
+            # if we got a nameserver, we resolve it to an IP address
+            # and then we query the IP address
+            nameserver = resolve(ns_domain_name, TYPE_A)
+        else:
+            raise Exception("No answer and no nameserver found")
 
 # ----------------------------------------------
 
-def main(domain_name):
-    response = send_query(domain_name=domain_name)
-    print("Header:", response.header)
-    print("Questions:", response.questions)
-    print("Answers:")
-    for answer in response.answers:
-        print("  ", answer.name, end=" ")
-        if answer.type_ == 1:
-            print(ip_to_string((answer.data)))
-        else:
-            print(answer.data)
-    print("Authorities:", response.authorities)
-    print("Additional:", response.additional)
+def main(ip_address, domain_name, record_type):
+    response = resolve(domain_name, record_type)
+    print(f"{domain_name} resolved to {response}")
 
 if __name__ == "__main__":
-    main("facebook.com")
+    main("198.41.0.4", "twitter.com", TYPE_A)
