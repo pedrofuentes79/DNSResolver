@@ -8,8 +8,8 @@ from dataclasses import dataclass
 #constants
 TYPE_A = 1
 TYPE_NS = 2
-
-
+TYPE_CNAME = 5
+TYPE_AAAA = 28 #ipv6 adress
 
 @dataclass
 class Header:
@@ -54,6 +54,11 @@ def question_to_bytes(question):
     return question.name + struct.pack('!HH', question.type_, question.class_)
 
 def encode_dns_name(domain_name):
+    # check if the input is a string or bytes object
+    if isinstance(domain_name, bytes):
+        domain_name = domain_name.decode("ascii")
+    elif not isinstance(domain_name, str):
+        raise ValueError("Input must be a string or bytes object")
     #Splits the domain name into parts (["google", "com"]), encodes each part, and adds the length of each part before the part
     #So, google.com ends up as b'\x06google\xo3com\x00', because google is 6 characters long, and com is 3 characters long. 
     #The x00 is the end of the domain name
@@ -106,16 +111,18 @@ def parse_record(reader):
     data = reader.read(10)
     # HHIH means 2byte int, 2byte int, 4byte int, 2byte int
     type_, class_, ttl, data_length = struct.unpack('!HHIH', data)
-
     if type_ == TYPE_NS:
         data = decode_name(reader)
     elif type_ == TYPE_A:
         data = ip_to_string(reader.read(data_length))
+    elif type_ == TYPE_CNAME:
+        # CNAME is an alias, so we decode it as a name
+        # then, we can resolve the name to an IP address
+        cname_domain = decode_name(reader)
+        data = resolve(cname_domain, TYPE_CNAME)
+
     else:
         data = reader.read(data_length)
-    return Record(name, type_, class_, ttl, data)
-
-    data = reader.read(data_length)
     return Record(name, type_, class_, ttl, data)
 
 
@@ -204,7 +211,7 @@ def resolve(domain_name, record_type):
         print(f"Querying {nameserver} for {domain_name}")
         response = send_query(nameserver, domain_name, record_type)
         # if we got an answer, we return it
-        if ip:= get_answer(response):
+        if ip := get_answer(response):
             return ip
         # if we didn't get an answer, we check if we got a nameserver to keep looking 
         elif nsIP := get_nameserver_ip(response):
@@ -219,9 +226,9 @@ def resolve(domain_name, record_type):
 
 # ----------------------------------------------
 
-def main(ip_address, domain_name, record_type):
+def main(domain_name, record_type):
     response = resolve(domain_name, record_type)
     print(f"{domain_name} resolved to {response}")
 
 if __name__ == "__main__":
-    main("198.41.0.4", "twitter.com", TYPE_A)
+    main("www.facebook.com", TYPE_A)
