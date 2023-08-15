@@ -1,5 +1,0 @@
-Copilot, please write a brief description of a DNS Query
-
-A DNS query is a request for information from a DNS server. 
-The DNS server will respond with the requested information, or an error if the information is not available.
-The query has 
