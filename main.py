@@ -3,13 +3,14 @@ import struct
 import dataclasses
 from io import BytesIO
 from dataclasses import dataclass
-
+import dns.resolver
 
 #constants
 TYPE_A = 1
 TYPE_NS = 2
 TYPE_CNAME = 5
 TYPE_AAAA = 28 #ipv6 adress
+TYPE_SOA = 6
 
 @dataclass
 class Header:
@@ -59,6 +60,7 @@ def encode_dns_name(domain_name):
         domain_name = domain_name.decode("ascii")
     elif not isinstance(domain_name, str):
         raise ValueError("Input must be a string or bytes object")
+    
     #Splits the domain name into parts (["google", "com"]), encodes each part, and adds the length of each part before the part
     #So, google.com ends up as b'\x06google\xo3com\x00', because google is 6 characters long, and com is 3 characters long. 
     #The x00 is the end of the domain name
@@ -120,7 +122,6 @@ def parse_record(reader):
         # then, we can resolve the name to an IP address
         cname_domain = decode_name(reader)
         data = resolve(cname_domain, TYPE_CNAME)
-
     else:
         data = reader.read(data_length)
     return Record(name, type_, class_, ttl, data)
@@ -201,6 +202,12 @@ def get_nameserver(packet):
         if record.type_ == TYPE_NS:
             return record.data.decode("utf-8")
 
+def get_cname(packet):
+    # return the first TYPE_CNAME record in the Answers section
+    for record in packet.answers:
+        if record.type_ == TYPE_CNAME:
+            return record.data.decode("utf-8")
+
 def resolve(domain_name, record_type):
     '''
     This function resolves a domain name to an IP address.
@@ -210,25 +217,45 @@ def resolve(domain_name, record_type):
     while True:
         print(f"Querying {nameserver} for {domain_name}")
         response = send_query(nameserver, domain_name, record_type)
+        print(response)
+
         # if we got an answer, we return it
         if ip := get_answer(response):
+            print("found an IP")
+            print("--------------------")
             return ip
         # if we didn't get an answer, we check if we got a nameserver to keep looking 
         elif nsIP := get_nameserver_ip(response):
             # in the next iteration, we'll query the nameserver we got
+            print("found a nameserver ip")
+            print("--------------------")
             nameserver = nsIP
         elif ns_domain_name := get_nameserver(response):
             # if we got a nameserver, we resolve it to an IP address
             # and then we query the IP address
+            print("found a nameserver domain name")
+            print("--------------------")   
             nameserver = resolve(ns_domain_name, TYPE_A)
+        elif cname := get_cname(response):
+            # if we got a CNAME, we follow the CNAME chain
+            print("found a CNAME")
+            print("--------------------")
+            return resolve(cname, TYPE_A)
         else:
-            raise Exception("No answer and no nameserver found")
+            print("didn't find anything")
+            return None
 
 # ----------------------------------------------
 
 def main(domain_name, record_type):
     response = resolve(domain_name, record_type)
-    print(f"{domain_name} resolved to {response}")
+    dns_python_response = str(dns.resolver.Resolver().resolve(domain_name, record_type)[0])
+    if response == dns_python_response:
+        print(f"{domain_name} resolved to {response}")
+        print("Success!")
+    else:
+        print(f"This program resolved {domain_name} to {response}")
+        print(f"Python DNS resolver resolved it to {dns_python_response}")
 
 if __name__ == "__main__":
-    main("www.facebook.com", TYPE_A)
+    main("wikipedia.org", TYPE_A)
